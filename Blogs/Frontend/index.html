@@ -1,0 +1,14 @@
+<h1>All Blogs</h1>
+<div id="blogs"></div>
+<script>
+async function loadBlogs(){
+  const res = await fetch('http://localhost:8000/blogs');
+  const blogs = await res.json();
+  let html = '';
+  blogs.forEach(b=>{
+    html += `<h2>${b.title}</h2><p>${b.content}</p><hr>`;
+  });
+  document.getElementById('blogs').innerHTML = html;
+}
+loadBlogs();
+</script>
