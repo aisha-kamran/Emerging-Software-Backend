@@ -22,6 +22,7 @@ from schemas import (
     AdminLogin,
     AdminCreate,
     AdminResponse,
+    AdminUpdate,
     TokenResponse,
     BlogCreate,
     BlogUpdate,
@@ -194,6 +195,53 @@ async def delete_admin(
     return {"detail": "Admin deleted successfully"}
 
 
+# Update admin (username/password)
+@app.put("/admin/{admin_id}", response_model=AdminResponse, tags=["Admin Management"])
+async def update_admin(
+    admin_id: int,
+    admin_data: AdminUpdate,
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Update an admin's username and/or password.
+
+    - Admins can update their own account.
+    - Super-admin can update any admin.
+    """
+    admin = db.query(Admin).filter(Admin.id == admin_id).first()
+    if not admin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Admin not found"
+        )
+
+    # Only super-admin or the owner can update
+    if current_admin.id != admin_id and not current_admin.is_super_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not permitted to update this admin"
+        )
+
+    # Update username if provided and not duplicate
+    if admin_data.username and admin_data.username != admin.username:
+        existing = db.query(Admin).filter(Admin.username == admin_data.username).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already registered"
+            )
+        admin.username = admin_data.username
+
+    # Update password if provided
+    if admin_data.password:
+        admin.hashed_password = get_password_hash(admin_data.password)
+
+    db.commit()
+    db.refresh(admin)
+    return admin
+
+
 # ============ Blog CRUD Endpoints ============
 
 @app.post("/blogs", response_model=BlogResponse, status_code=status.HTTP_201_CREATED, tags=["Blogs"])
@@ -306,6 +354,18 @@ async def delete_blog(
     db.commit()
     
     return {"detail": "Blog deleted successfully"}
+
+@app.get("/blogs/summary", tags=["Blogs"])
+async def blogs_summary(db: Session = Depends(get_db)):
+    total_blogs = db.query(Blog).count()
+    drafts = db.query(Blog).filter(Blog.status == "draft").count()
+    published = db.query(Blog).filter(Blog.status == "published").count()
+    
+    return {
+        "total": total_blogs,
+        "drafts": drafts,
+        "published": published
+    }
 
 
 # ============ Health Check ============

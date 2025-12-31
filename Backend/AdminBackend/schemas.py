@@ -75,16 +75,7 @@ class BlogCreate(BaseModel):
     title: str = Field(..., min_length=5, max_length=255)
     content: str = Field(..., min_length=10)
     author: str = Field(..., min_length=2, max_length=100)
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "title": "Introduction to FastAPI",
-                "content": "FastAPI is a modern web framework for building APIs with Python...",
-                "author": "John Doe"
-            }
-        }
-
+    status: Optional[str] = "draft"  
 
 class BlogUpdate(BaseModel):
     """Schema for updating a blog"""
@@ -102,12 +93,27 @@ class BlogUpdate(BaseModel):
         }
 
 
+class AdminUpdate(BaseModel):
+    """Schema for updating an admin"""
+    username: Optional[str] = Field(None, min_length=3, max_length=50)
+    password: Optional[str] = Field(None, min_length=8)
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "username": "updatedadmin",
+                "password": "newsecurepassword"
+            }
+        }
+
+
 class BlogResponse(BaseModel):
     """Schema for blog response"""
     id: int
     title: str
     content: str
     author: str
+    status: str
     created_at: datetime
     updated_at: datetime
 

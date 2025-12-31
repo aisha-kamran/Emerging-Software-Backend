@@ -5,6 +5,7 @@ export interface User {
   email: string;
   name: string;
   role: 'admin' | 'superadmin';
+  isRemote?: boolean;
   createdAt: string;
 }
 

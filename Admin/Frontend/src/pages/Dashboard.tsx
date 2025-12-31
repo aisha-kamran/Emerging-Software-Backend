@@ -1,15 +1,89 @@
 import { FileText, Users, CheckCircle, Clock, Activity } from 'lucide-react';
 import AdminLayout from '@/components/layout/AdminLayout';
-import { getBlogs, getUsers, getLogs } from '@/lib/storage';
+import { getLogs, getUsers } from '@/lib/storage';
+import { useEffect, useState } from 'react';
+import api, { FORCE_BACKEND } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToastNotification } from '@/components/ui/ToastNotification';
 
 const Dashboard = () => {
-  const blogs = getBlogs();
-  const users = getUsers();
+  const [blogs, setBlogs] = useState<any[]>([]);
+  const { isSuperAdmin } = useAuth();
+  const [users, setUsers] = useState<any[]>(getUsers());
   const logs = getLogs();
+  const { showToast } = useToastNotification();
 
-  const publishedBlogs = blogs.filter(b => b.status === 'published').length;
-  const draftBlogs = blogs.filter(b => b.status === 'draft').length;
+  useEffect(() => {
+    let mounted = true;
+
+    // Fetch public blogs from backend; normalize shape so UI stats work
+    api.fetchBlogs()
+      .then((data) => {
+        if (!mounted) return;
+        const mapped = data.map((b: any) => ({
+          id: b.id,
+          title: b.title,
+          content: b.content,
+          author: b.author || b.author || 'Unknown',
+          // backend uses created_at, frontend expects createdAt
+          createdAt: b.created_at || b.createdAt || new Date().toISOString(),
+          updatedAt: b.updated_at || b.updatedAt || new Date().toISOString(),
+          // some backends don't have `status`; default to published
+          status: b.status || 'published',
+        }));
+        setBlogs(mapped);
+      })
+      .catch(() => { /* keep existing local state or empty */ });
+
+    // Try to fetch admins only if we have a token; otherwise keep local users
+    const token = api.getToken();
+    if (FORCE_BACKEND) {
+      if (!token) {
+        // force backend mode and no token: notify user
+        if (mounted) {
+          setUsers([]);
+          showToast('error', 'Backend-only mode enabled — please login to fetch dashboard data');
+        }
+      } else {
+        api.fetchAdmins()
+          .then((data) => { if (mounted) {
+            const mapped = data.map((a: any) => ({
+              id: String(a.id),
+              email: `${a.username}@admin.com`,
+              name: a.username,
+              role: a.is_super_admin ? 'superadmin' : 'admin',
+              createdAt: a.created_at || new Date().toISOString(),
+              isRemote: true,
+            }));
+            setUsers(mapped);
+          }}).catch(() => { if (mounted) setUsers([]); });
+      }
+    } else {
+      if (token) {
+        api.fetchAdmins()
+          .then((data) => { if (mounted) {
+            const mapped = data.map((a: any) => ({
+              id: String(a.id),
+              email: `${a.username}@admin.com`,
+              name: a.username,
+              role: a.is_super_admin ? 'superadmin' : 'admin',
+              createdAt: a.created_at || new Date().toISOString(),
+              isRemote: true,
+            }));
+            setUsers(mapped);
+          }}).catch(() => { /* keep existing local users */ });
+      }
+    }
+
+    return () => { mounted = false; };
+  }, []);
+
+  const publishedBlogs = blogs.filter((b: any) => b.status === 'published').length;
+  const draftBlogs = blogs.filter((b: any) => b.status === 'draft').length;
   const recentLogs = logs.slice(-5).reverse();
+
+  // Filter users for display: hide superadmin unless current user is superadmin
+  const visibleUsers = isSuperAdmin ? users : users.filter(u => u.role !== 'superadmin');
 
   const stats = [
     { 
@@ -35,7 +109,7 @@ const Dashboard = () => {
     },
     { 
       label: 'Total Admins', 
-      value: users.length, 
+      value: visibleUsers.length, 
       icon: Users, 
       color: 'text-primary',
       bgColor: 'bg-primary/20'

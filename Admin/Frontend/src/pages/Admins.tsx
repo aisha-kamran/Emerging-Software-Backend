@@ -1,16 +1,17 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, Search, Shield, ShieldCheck } from 'lucide-react';
 import AdminLayout from '@/components/layout/AdminLayout';
 import { Modal, ConfirmModal } from '@/components/ui/Modal';
 import { useToastNotification } from '@/components/ui/ToastNotification';
 import { useAuth } from '@/contexts/AuthContext';
 import { User, getUsers, addUser, updateUser, deleteUser, addLog } from '@/lib/storage';
+import api, { FORCE_BACKEND } from '@/lib/api';
 
 const Admins = () => {
   const { user } = useAuth();
   const { showToast } = useToastNotification();
   
-  const [admins, setAdmins] = useState<User[]>(getUsers());
+  const [admins, setAdmins] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -20,6 +21,7 @@ const Admins = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'superadmin'>('admin');
+  const [password, setPassword] = useState('');
 
   const filteredAdmins = admins.filter(admin =>
     admin.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -31,8 +33,61 @@ const Admins = () => {
     setName('');
     setEmail('');
     setRole('admin');
+    setPassword('');
     setIsModalOpen(true);
   };
+
+  useEffect(() => {
+    let mounted = true;
+    const token = api.getToken();
+
+    if (FORCE_BACKEND) {
+      if (!token) {
+        // when forcing backend, do not use local users
+        setAdmins([]);
+        return;
+      }
+      api.fetchAdmins()
+        .then((data) => {
+          if (!mounted) return;
+          const mapped = data.map((a: any) => ({
+            id: String(a.id),
+            email: `${a.username}@admin.com`,
+            name: a.username,
+            role: a.is_super_admin ? 'superadmin' : 'admin',
+            createdAt: a.created_at || new Date().toISOString(),
+            isRemote: true,
+          }));
+          setAdmins(mapped);
+        })
+        .catch(() => {
+          if (!mounted) return;
+          setAdmins([]);
+        });
+    } else {
+      // normal mode: prefer backend if token, otherwise use local storage
+      if (token) {
+        api.fetchAdmins()
+          .then((data) => {
+            if (!mounted) return;
+            const mapped = data.map((a: any) => ({
+              id: String(a.id),
+              email: `${a.username}@admin.com`,
+              name: a.username,
+              role: a.is_super_admin ? 'superadmin' : 'admin',
+              createdAt: a.created_at || new Date().toISOString(),
+              isRemote: true,
+            }));
+            setAdmins(mapped);
+          })
+          .catch(() => { if (mounted) setAdmins(getUsers()); });
+      } else {
+        setAdmins(getUsers());
+      }
+    }
+
+    return () => { mounted = false; };
+  }, []);
 
   const openEditModal = (admin: User) => {
     setSelectedAdmin(admin);
@@ -51,7 +106,7 @@ const Admins = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!name.trim() || !email.trim()) {
@@ -76,29 +131,121 @@ const Admins = () => {
         updates.role = role;
       }
       
-      updateUser(selectedAdmin.id, updates);
-      setAdmins(getUsers());
-      addLog({
-        adminId: user!.id,
-        adminName: user!.name,
-        action: 'update',
-        entity: 'admin',
-        entityName: name,
-      });
-      showToast('success', 'Admin updated successfully');
+      // Try backend update first if token present
+      const token = api.getToken();
+      if (FORCE_BACKEND) {
+        if (!token) {
+          showToast('error', 'Backend required: please login first');
+          return;
+        }
+        try {
+          await api.updateAdmin(selectedAdmin.id, { username: email.includes('@') ? email.split('@')[0] : email });
+          // reflect change locally
+          updateUser(selectedAdmin.id, updates);
+          setAdmins(getUsers());
+          addLog({
+            adminId: user!.id,
+            adminName: user!.name,
+            action: 'update',
+            entity: 'admin',
+            entityName: name,
+          });
+          showToast('success', 'Admin updated on backend and locally');
+        } catch (err) {
+          showToast('error', 'Backend update failed');
+        }
+      } else {
+        try {
+          await api.updateAdmin(selectedAdmin.id, { username: email.includes('@') ? email.split('@')[0] : email });
+          // reflect change locally
+          updateUser(selectedAdmin.id, updates);
+          setAdmins(getUsers());
+          addLog({
+            adminId: user!.id,
+            adminName: user!.name,
+            action: 'update',
+            entity: 'admin',
+            entityName: name,
+          });
+          showToast('success', 'Admin updated on backend and locally');
+        } catch (err) {
+          // fallback to local update
+          updateUser(selectedAdmin.id, updates);
+          setAdmins(getUsers());
+          addLog({
+            adminId: user!.id,
+            adminName: user!.name,
+            action: 'update',
+            entity: 'admin',
+            entityName: name,
+          });
+          showToast('warning', 'Backend update failed — updated locally');
+        }
+      }
+      
     } else {
-      addUser({ name, email, role });
-      setAdmins(getUsers());
-      addLog({
-        adminId: user!.id,
-        adminName: user!.name,
-        action: 'create',
-        entity: 'admin',
-        entityName: name,
-      });
-      showToast('success', 'Admin created successfully');
+      // Create admin via backend if possible (requires JWT). Fall back to local storage.
+      const username = email.includes('@') ? email.split('@')[0] : email;
+      const token = api.getToken();
+      if (FORCE_BACKEND) {
+        if (!password) {
+          showToast('error', 'Password is required when creating a backend admin');
+          return;
+        }
+        if (!token) {
+          showToast('error', 'Backend required: please login first');
+          return;
+        }
+        try {
+          const resp = await api.createAdmin(username, password);
+          addUser({ name: resp.username, email, role: resp.is_super_admin ? 'superadmin' : 'admin', isRemote: true });
+          setAdmins(getUsers());
+          addLog({
+            adminId: user!.id,
+            adminName: user!.name,
+            action: 'create',
+            entity: 'admin',
+            entityName: name,
+          });
+          showToast('success', 'Admin created on backend and saved locally');
+        } catch (err: any) {
+          showToast('error', 'Backend create failed');
+        }
+      } else {
+        try {
+          if (!password) {
+            showToast('error', 'Password is required when creating a backend admin');
+            return;
+          }
+          const resp = await api.createAdmin(username, password);
+          // resp should contain username and is_super_admin
+          addUser({ name: resp.username, email, role: resp.is_super_admin ? 'superadmin' : 'admin', isRemote: true });
+          setAdmins(getUsers());
+          addLog({
+            adminId: user!.id,
+            adminName: user!.name,
+            action: 'create',
+            entity: 'admin',
+            entityName: name,
+          });
+          showToast('success', 'Admin created on backend and saved locally');
+        } catch (err: any) {
+          // Fallback to local-only creation
+          addUser({ name, email, role });
+          setAdmins(getUsers());
+          addLog({
+            adminId: user!.id,
+            adminName: user!.name,
+            action: 'create',
+            entity: 'admin',
+            entityName: name,
+          });
+          showToast('warning', 'Backend create failed — admin created locally');
+        }
+      }
     }
 
+    setPassword('');
     setIsModalOpen(false);
   };
 
@@ -197,6 +344,9 @@ const Admins = () => {
                         <span className={`badge ${admin.role === 'superadmin' ? 'badge-primary' : 'badge-success'}`}>
                           {admin.role === 'superadmin' ? 'Super Admin' : 'Admin'}
                         </span>
+                        {admin.isRemote && (
+                          <span className="ml-2 text-xs px-2 py-1 rounded-lg bg-primary/10 text-primary">Remote</span>
+                        )}
                       </div>
                     </td>
                     <td className="text-muted-foreground">{formatDate(admin.createdAt)}</td>
@@ -257,6 +407,21 @@ const Admins = () => {
               placeholder="Enter email address"
             />
           </div>
+          {!selectedAdmin && (
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="input-field"
+                placeholder="Set a password for the new admin"
+                required
+              />
+            </div>
+          )}
           
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">

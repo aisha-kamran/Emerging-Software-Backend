@@ -1,10 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User, getCurrentUser, login as doLogin, logout as doLogout, initializeStorage } from '@/lib/storage';
+import { User, getCurrentUser, login as doLogin, logout as doLogout, initializeStorage, addUser } from '@/lib/storage';
+import api from '@/lib/api';
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  login: (email: string, password: string) => User | null;
+  login: (emailOrUsername: string, password: string) => Promise<User | null>;
   logout: () => void;
   isSuperAdmin: boolean;
 }
@@ -25,10 +26,51 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(false);
   }, []);
 
-  const login = (email: string, password: string): User | null => {
-    const loggedInUser = doLogin(email, password);
-    setUser(loggedInUser);
-    return loggedInUser;
+  const login = async (emailOrUsername: string, password: string): Promise<User | null> => {
+    // Try backend login first (username expected). If user provided an email, derive username part
+    const username = emailOrUsername.includes('@') ? emailOrUsername.split('@')[0] : emailOrUsername;
+    try {
+      const tokenResp = await api.adminLogin(username, password);
+      api.saveToken(tokenResp.access_token);
+
+      // Try to fetch admins and map to local User shape
+      try {
+        const admins = await api.fetchAdmins();
+        const match = admins.find((a: any) => a.username === username);
+        if (match) {
+          const newUser: User = {
+            id: String(match.id),
+            email: `${match.username}@admin.com`,
+            name: match.username,
+            role: match.is_super_admin ? 'superadmin' : 'admin',
+            createdAt: match.created_at || new Date().toISOString(),
+          };
+          // Persist session in sessionStorage for compatibility with rest of app
+          sessionStorage.setItem('currentUser', JSON.stringify(newUser));
+          setUser(newUser);
+          return newUser;
+        }
+      } catch (e) {
+        // ignore fetchAdmins errors, fall back to local demo login below
+      }
+
+      // If we couldn't map admin, create a minimal user entry
+      const fallbackUser: User = {
+        id: `admin-${Date.now()}`,
+        email: `${username}@admin.com`,
+        name: username,
+        role: 'admin',
+        createdAt: new Date().toISOString(),
+      };
+      sessionStorage.setItem('currentUser', JSON.stringify(fallbackUser));
+      setUser(fallbackUser);
+      return fallbackUser;
+    } catch (e) {
+      // Backend login failed; fall back to local demo auth
+      const loggedInUser = doLogin(emailOrUsername, password);
+      setUser(loggedInUser);
+      return loggedInUser;
+    }
   };
 
   const logout = () => {

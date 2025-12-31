@@ -13,7 +13,6 @@ class Admin(Base):
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
-
 class Blog(Base):
     """Blog post model"""
     __tablename__ = "blogs"
@@ -21,5 +20,10 @@ class Blog(Base):
     title = Column(String(255), nullable=False, index=True)
     content = Column(Text, nullable=False)
     author = Column(String(100), nullable=False)
+    
+    # 👇 NEW FIELDS
+    status = Column(String(50), default="draft", nullable=False)  # draft / published
+    is_published = Column(Boolean, default=False, nullable=False)
+
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

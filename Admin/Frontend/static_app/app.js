@@ -9,6 +9,9 @@ const routes = {
   '/login': loginPage,
 };
 
+// Backend API base (used by static demo to optionally call real backend)
+const API_BASE = 'http://localhost:8000';
+
 function navigate(path) {
   window.location.hash = '#'+path;
 }
@@ -60,11 +63,47 @@ function adminsPage(){
   el.innerHTML = `
     <h2 class="h1">Admins</h2>
     <p class="small">List of admin accounts</p>
-    <div style="margin-top:12px">
-      <div class="list-item">superadmin@admin.com <span class="small">(Super Admin)</span></div>
-      <div class="list-item" style="margin-top:8px">admin@admin.com <span class="small">(Admin)</span></div>
+    <div id="adminsList" style="margin-top:12px">
+      <div class="list-item">Loading admins...</div>
     </div>
   `;
+
+  // Try to fetch admins from backend using stored token; fall back to static demo list
+  setTimeout(async () => {
+    const container = el.querySelector('#adminsList');
+    const token = localStorage.getItem('api_token');
+    if (token) {
+      try {
+        const res = await fetch(`${API_BASE}/admin/list`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) {
+          const admins = await res.json();
+          container.innerHTML = '';
+          admins.forEach(a => {
+            const email = `${a.username}@admin.com`;
+            const roleLabel = a.is_super_admin ? '(Super Admin)' : '(Admin)';
+            const item = document.createElement('div');
+            item.className = 'list-item';
+            item.style.marginTop = '8px';
+            item.textContent = `${email} `;
+            const span = document.createElement('span');
+            span.className = 'small';
+            span.textContent = ` ${roleLabel}`;
+            item.appendChild(span);
+            container.appendChild(item);
+          });
+          return;
+        }
+      } catch (e) {
+        // fallthrough to static list
+      }
+    }
+
+    // Fallback static list
+    container.innerHTML = `
+      <div class="list-item">superadmin@admin.com <span class="small">(Super Admin)</span></div>
+      <div class="list-item" style="margin-top:8px">admin@admin.com <span class="small">(Admin)</span></div>
+    `;
+  }, 10);
   return el;
 }
 
@@ -134,17 +173,51 @@ function loginPage(){
     form.addEventListener('submit', (e)=>{
       e.preventDefault();
       const email = el.querySelector('#email').value.trim();
-      // demo accepts any password
-      if(email === 'superadmin@admin.com' || email === 'admin@admin.com'){
-        // fake login: store user in localStorage
-        localStorage.setItem('admin_user', email);
-        // redirect to dashboard
-        navigate('/dashboard');
-      } else {
-        const err = el.querySelector('#loginError');
-        err.style.display = 'block';
-        setTimeout(()=> err.style.display='none', 3000);
-      }
+      const password = el.querySelector('#password').value;
+      const username = email.includes('@') ? email.split('@')[0] : email;
+
+      // Try backend login first
+      (async () => {
+        try {
+          const body = new URLSearchParams();
+          body.append('username', username);
+          body.append('password', password);
+          const resp = await fetch(`${API_BASE}/admin/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            localStorage.setItem('api_token', data.access_token);
+
+            // Fetch admin list to determine role
+            const listRes = await fetch(`${API_BASE}/admin/list`, { headers: { Authorization: `Bearer ${data.access_token}` } });
+            if (listRes.ok) {
+              const admins = await listRes.json();
+              const match = admins.find(a => a.username === username);
+              const role = match && match.is_super_admin ? 'superadmin' : 'admin';
+              localStorage.setItem('admin_user', email);
+              localStorage.setItem('admin_role', role);
+              navigate('/dashboard');
+              return;
+            }
+          }
+        } catch (err) {
+          // ignore and fallback to demo
+        }
+
+        // Fallback demo behavior: accept built-in demo accounts
+        if(email === 'superadmin@admin.com' || email === 'admin@admin.com'){
+          localStorage.setItem('admin_user', email);
+          localStorage.setItem('admin_role', email === 'superadmin@admin.com' ? 'superadmin' : 'admin');
+          navigate('/dashboard');
+        } else {
+          const err = el.querySelector('#loginError');
+          err.style.display = 'block';
+          setTimeout(()=> err.style.display='none', 3000);
+        }
+      })();
     });
   },20);
 
@@ -161,6 +234,21 @@ function updateNav(){
     if(location.hash === '' && href === '#/') a.classList.add('active');
   });
 }
+
+// Hide or show Admins nav link based on role (superadmin only)
+function refreshNavVisibility(){
+  const role = localStorage.getItem('admin_role');
+  const adminLink = document.querySelector('a[data-link][href="#/admins"]');
+  if (!adminLink) return;
+  if (role === 'superadmin') {
+    adminLink.style.display = '';
+  } else {
+    adminLink.style.display = 'none';
+  }
+}
+
+window.addEventListener('hashchange', ()=>{ updateNav(); refreshNavVisibility(); });
+window.addEventListener('load', ()=>{ updateNav(); refreshNavVisibility(); });
 
 window.addEventListener('hashchange', updateNav);
 window.addEventListener('load', updateNav);

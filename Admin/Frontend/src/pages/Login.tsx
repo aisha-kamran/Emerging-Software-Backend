@@ -24,16 +24,18 @@ const Login = () => {
 
     // Simulate network delay
     await new Promise(resolve => setTimeout(resolve, 500));
-
-    const loggedInUser = login(email, password);
-    
-    if (loggedInUser) {
-      navigate('/dashboard');
-    } else {
-      setError('Invalid email. Please use a registered account.');
+    try {
+      const loggedInUser = await login(email, password);
+      if (loggedInUser) {
+        navigate('/dashboard');
+      } else {
+        setError('Invalid credentials.');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Login failed');
+    } finally {
+      setIsLoading(false);
     }
-    
-    setIsLoading(false);
   };
 
   return (
