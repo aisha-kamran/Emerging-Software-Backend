@@ -283,6 +283,17 @@ async def list_blogs(
     blogs = db.query(Blog).order_by(Blog.created_at.desc()).offset(skip).limit(limit).all()
     return blogs
 
+@app.get("/blogs/summary", tags=["Blogs"])
+async def blogs_summary(db: Session = Depends(get_db)):
+    total_blogs = db.query(Blog).count()
+    drafts = db.query(Blog).filter(Blog.status == "draft").count()
+    published = db.query(Blog).filter(Blog.status == "published").count()
+    
+    return {
+        "total": total_blogs,
+        "drafts": drafts,
+        "published": published
+    }
 
 @app.get("/blogs/{blog_id}", response_model=BlogResponse, tags=["Blogs"])
 async def get_blog(
@@ -355,17 +366,6 @@ async def delete_blog(
     
     return {"detail": "Blog deleted successfully"}
 
-@app.get("/blogs/summary", tags=["Blogs"])
-async def blogs_summary(db: Session = Depends(get_db)):
-    total_blogs = db.query(Blog).count()
-    drafts = db.query(Blog).filter(Blog.status == "draft").count()
-    published = db.query(Blog).filter(Blog.status == "published").count()
-    
-    return {
-        "total": total_blogs,
-        "drafts": drafts,
-        "published": published
-    }
 
 
 # ============ Health Check ============

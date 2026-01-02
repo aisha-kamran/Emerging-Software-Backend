@@ -1,13 +1,13 @@
 import { FileText, Users, CheckCircle, Clock, Activity } from 'lucide-react';
 import AdminLayout from '@/components/layout/AdminLayout';
-import { getLogs, getUsers } from '@/lib/storage';
+import { getLogs, getUsers, getBlogs } from '@/lib/storage';
 import { useEffect, useState } from 'react';
 import api, { FORCE_BACKEND } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToastNotification } from '@/components/ui/ToastNotification';
 
 const Dashboard = () => {
-  const [blogs, setBlogs] = useState<any[]>([]);
+  const [blogs, setBlogs] = useState<any[]>(getBlogs());
   const { isSuperAdmin } = useAuth();
   const [users, setUsers] = useState<any[]>(getUsers());
   const logs = getLogs();
@@ -33,7 +33,14 @@ const Dashboard = () => {
         }));
         setBlogs(mapped);
       })
-      .catch(() => { /* keep existing local state or empty */ });
+      .catch(() => {
+        if (!mounted) return;
+        if (!FORCE_BACKEND) {
+          setBlogs(getBlogs());
+        } else {
+          setBlogs([]);
+        }
+      });
 
     // Try to fetch admins only if we have a token; otherwise keep local users
     const token = api.getToken();
@@ -212,7 +219,8 @@ const Dashboard = () => {
                   <span className="text-xs text-muted-foreground whitespace-nowrap">
                     {formatDate(log.date)}
                   </span>
-                </div>
+                <                # from a shell
+                Invoke-RestMethod -Uri http://localhost:8000/blogs -Method Get | ConvertTo-Json -Depth 4/div>
               ))}
             </div>
           )}
