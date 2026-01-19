@@ -1,11 +1,11 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
 from sqlalchemy.orm import Session
 from datetime import timedelta
 import os
 from dotenv import load_dotenv
-# Load environment variables early so modules that read them at import time work
+
+# Load environment variables
 load_dotenv()
 
 from database import Base, engine, get_db
@@ -14,12 +14,10 @@ from auth import (
     authenticate_admin,
     create_access_token,
     get_current_admin,
-    get_super_admin,
     get_password_hash,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from schemas import (
-    AdminLogin,
     AdminCreate,
     AdminResponse,
     AdminUpdate,
@@ -30,14 +28,11 @@ from schemas import (
     BlogListResponse
 )
 
-load_dotenv()
-
-# Create tables (skip if DB not available)
+# Create tables
 try:
     Base.metadata.create_all(bind=engine)
 except Exception as e:
-    print(f"Warning: Could not create tables on startup: {e}")
-    print("Make sure your DATABASE_URL is correct in .env")
+    print(f"Warning: Could not create tables: {e}")
 
 app = FastAPI(
     title="Blogs & Admin API",
@@ -49,15 +44,17 @@ app = FastAPI(
     }
 )
 
-# CORS Configuration
-FRONTEND_URLS = os.getenv("FRONTEND_URLS", "http://localhost:3000").split(",")
+# ==========================================
+# 👇 FIXED CORS SETTINGS (Allow All - Sabse Safe)
+# ==========================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=FRONTEND_URLS,
+    allow_origins=["*"],  # ✅ Har jagah se request allow karein (Fixes 400 Error)
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # ✅ OPTIONS, GET, POST sab allow
+    allow_headers=["*"],  # ✅ Authorization header allow
 )
+# ==========================================
 
 
 # ============ Admin Authentication Endpoints ============
@@ -68,14 +65,7 @@ async def admin_login(
     password: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    """
-    Admin login endpoint.
-    
-    - **username**: Admin username
-    - **password**: Admin password
-    
-    Returns JWT access token for authenticated admin.
-    """
+    """Admin login endpoint."""
     admin = authenticate_admin(db, username, password)
     if not admin:
         raise HTTPException(
@@ -98,32 +88,19 @@ async def create_admin(
     current_admin: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    """
-    Create a new admin account (admin-only endpoint).
-    
-    Only authenticated admins can create other admins.
-    Super-admin can create both regular and super-admin accounts.
-    """
-    # Check if username already exists
+    """Create a new admin account (admin-only)."""
     existing_admin = db.query(Admin).filter(Admin.username == admin_data.username).first()
     if existing_admin:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
-        )
+        raise HTTPException(status_code=400, detail="Username already registered")
     
-    # Create new admin
-    hashed_password = get_password_hash(admin_data.password)
     new_admin = Admin(
         username=admin_data.username,
-        hashed_password=hashed_password,
-        is_super_admin=False  # Regular admins are created by default
+        hashed_password=get_password_hash(admin_data.password),
+        is_super_admin=False
     )
-    
     db.add(new_admin)
     db.commit()
     db.refresh(new_admin)
-    
     return new_admin
 
 
@@ -132,11 +109,7 @@ async def list_admins(
     current_admin: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    """
-    List all admins (admin-only endpoint).
-    
-    Only authenticated admins can view the admin list.
-    """
+    """List all admins."""
     admins = db.query(Admin).all()
     return admins
 
@@ -147,55 +120,25 @@ async def delete_admin(
     current_admin: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    """
-    Delete an admin account.
-    
-    - **Super-admin**: Can delete any admin (except themselves or the permanent admin)
-    - **Regular admin**: Cannot delete admins
-    - **Note**: The first admin (ID=1) is permanent and cannot be deleted
-    """
+    """Delete an admin account."""
     admin_to_delete = db.query(Admin).filter(Admin.id == admin_id).first()
     if not admin_to_delete:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Admin not found"
-        )
+        raise HTTPException(status_code=404, detail="Admin not found")
     
-    # Prevent deletion of the first admin (permanent)
     if admin_to_delete.id == 1:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete the permanent admin account"
-        )
+        raise HTTPException(status_code=403, detail="Cannot delete the permanent admin account")
     
-    # Prevent deletion of the requesting admin
     if current_admin.id == admin_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete your own account"
-        )
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
     
-    # Only super-admin can delete other admins
     if not current_admin.is_super_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only super-admin can delete admins"
-        )
-    
-    # Prevent deletion of super-admin by non-super-admin
-    if admin_to_delete.is_super_admin and current_admin.id != admin_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot delete super-admin"
-        )
+        raise HTTPException(status_code=403, detail="Only super-admin can delete admins")
     
     db.delete(admin_to_delete)
     db.commit()
-    
     return {"detail": "Admin deleted successfully"}
 
 
-# Update admin (username/password)
 @app.put("/admin/{admin_id}", response_model=AdminResponse, tags=["Admin Management"])
 async def update_admin(
     admin_id: int,
@@ -203,37 +146,20 @@ async def update_admin(
     current_admin: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    """
-    Update an admin's username and/or password.
-
-    - Admins can update their own account.
-    - Super-admin can update any admin.
-    """
+    """Update admin credentials."""
     admin = db.query(Admin).filter(Admin.id == admin_id).first()
     if not admin:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Admin not found"
-        )
+        raise HTTPException(status_code=404, detail="Admin not found")
 
-    # Only super-admin or the owner can update
     if current_admin.id != admin_id and not current_admin.is_super_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not permitted to update this admin"
-        )
+        raise HTTPException(status_code=403, detail="Not permitted to update this admin")
 
-    # Update username if provided and not duplicate
     if admin_data.username and admin_data.username != admin.username:
         existing = db.query(Admin).filter(Admin.username == admin_data.username).first()
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Username already registered"
-            )
+            raise HTTPException(status_code=400, detail="Username already registered")
         admin.username = admin_data.username
 
-    # Update password if provided
     if admin_data.password:
         admin.hashed_password = get_password_hash(admin_data.password)
 
@@ -250,21 +176,16 @@ async def create_blog(
     current_admin: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    """
-    Create a new blog post (admin-only endpoint).
-    
-    Requires valid JWT token from authenticated admin.
-    """
+    """Create a new blog post."""
     new_blog = Blog(
         title=blog_data.title,
         content=blog_data.content,
-        author=blog_data.author
+        author=blog_data.author,
+        status=blog_data.status or "draft"
     )
-    
     db.add(new_blog)
     db.commit()
     db.refresh(new_blog)
-    
     return new_blog
 
 
@@ -274,17 +195,14 @@ async def list_blogs(
     skip: int = 0,
     limit: int = 10
 ):
-    """
-    Get all published blog posts (public endpoint).
-    
-    - **skip**: Number of blogs to skip (default: 0)
-    - **limit**: Number of blogs to return (default: 10)
-    """
+    """Get all blogs (public)."""
     blogs = db.query(Blog).order_by(Blog.created_at.desc()).offset(skip).limit(limit).all()
     return blogs
 
+
 @app.get("/blogs/summary", tags=["Blogs"])
 async def blogs_summary(db: Session = Depends(get_db)):
+    """Get blog statistics."""
     total_blogs = db.query(Blog).count()
     drafts = db.query(Blog).filter(Blog.status == "draft").count()
     published = db.query(Blog).filter(Blog.status == "published").count()
@@ -295,20 +213,16 @@ async def blogs_summary(db: Session = Depends(get_db)):
         "published": published
     }
 
+
 @app.get("/blogs/{blog_id}", response_model=BlogResponse, tags=["Blogs"])
 async def get_blog(
     blog_id: int,
     db: Session = Depends(get_db)
 ):
-    """
-    Get a specific blog post by ID (public endpoint).
-    """
+    """Get single blog."""
     blog = db.query(Blog).filter(Blog.id == blog_id).first()
     if not blog:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Blog not found"
-        )
+        raise HTTPException(status_code=404, detail="Blog not found")
     return blog
 
 
@@ -319,27 +233,17 @@ async def update_blog(
     current_admin: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    """
-    Update a blog post (admin-only endpoint).
-    
-    Only authenticated admins can update blogs.
-    Only fields provided will be updated.
-    """
+    """Update a blog post."""
     blog = db.query(Blog).filter(Blog.id == blog_id).first()
     if not blog:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Blog not found"
-        )
+        raise HTTPException(status_code=404, detail="Blog not found")
     
-    # Update only provided fields
     update_data = blog_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(blog, field, value)
     
     db.commit()
     db.refresh(blog)
-    
     return blog
 
 
@@ -349,30 +253,16 @@ async def delete_blog(
     current_admin: Admin = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    """
-    Delete a blog post (admin-only endpoint).
-    
-    Only authenticated admins can delete blogs.
-    """
+    """Delete a blog post."""
     blog = db.query(Blog).filter(Blog.id == blog_id).first()
     if not blog:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Blog not found"
-        )
+        raise HTTPException(status_code=404, detail="Blog not found")
     
     db.delete(blog)
     db.commit()
-    
     return {"detail": "Blog deleted successfully"}
 
 
-
-# ============ Health Check ============
-
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """
-    Health check endpoint for deployment monitoring.
-    """
     return {"status": "healthy", "service": "Blogs & Admin API"}

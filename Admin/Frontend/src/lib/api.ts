@@ -1,138 +1,129 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-export const FORCE_BACKEND = import.meta.env.VITE_FORCE_BACKEND === 'true';
+// src/lib/api.ts
 
-type Blog = {
-  id: string | number;
-  title: string;
-  content?: string;
-  author?: string;
-  authorId?: string;
-  status?: string;
-  createdAt?: string;
-  updatedAt?: string;
-};
+// Backend URL
+const API_URL = 'http://127.0.0.1:8000';
 
-type TokenResponse = {
-  access_token: string;
-  token_type: string;
-};
+export const api = {
+  // --- Auth & Helpers ---
+  getToken: () => localStorage.getItem('token'),
+  
+  getHeaders: () => {
+    const token = localStorage.getItem('token');
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    };
+  },
 
-const jsonOrThrow = async (res: Response) => {
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || res.statusText);
+  // --- Login ---
+  login: async (username, password) => {
+    // Backend expects form-data
+    const formData = new URLSearchParams();
+    formData.append('username', username);
+    formData.append('password', password);
+
+    const res = await fetch(`${API_URL}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData,
+    });
+
+    if (!res.ok) throw new Error('Invalid credentials');
+    return res.json(); // Returns { access_token, token_type }
+  },
+
+  // --- Admins ---
+  fetchAdmins: async () => {
+    const res = await fetch(`${API_URL}/admin/list`, {
+      method: 'GET',
+      headers: api.getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch admins');
+    return res.json();
+  },
+
+  createAdmin: async (username, password) => {
+    const res = await fetch(`${API_URL}/admin/create`, {
+      method: 'POST',
+      headers: api.getHeaders(),
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to create admin');
+    }
+    return res.json();
+  },
+
+  updateAdmin: async (id, data) => {
+    const res = await fetch(`${API_URL}/admin/${id}`, {
+      method: 'PUT',
+      headers: api.getHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to update admin');
+    return res.json();
+  },
+
+  deleteAdmin: async (id) => {
+    const res = await fetch(`${API_URL}/admin/${id}`, {
+      method: 'DELETE',
+      headers: api.getHeaders(),
+    });
+    if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to delete admin');
+    }
+    return res.json();
+  },
+
+  // --- Blogs ---
+  fetchBlogs: async (skip = 0, limit = 100) => {
+    const res = await fetch(`${API_URL}/blogs?skip=${skip}&limit=${limit}`, {
+      method: 'GET',
+      headers: api.getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch blogs');
+    return res.json();
+  },
+
+  fetchBlogSummary: async () => {
+    const res = await fetch(`${API_URL}/blogs/summary`, {
+      method: 'GET',
+      headers: api.getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch summary');
+    return res.json();
+  },
+
+  createBlog: async (data) => {
+    const res = await fetch(`${API_URL}/blogs`, {
+      method: 'POST',
+      headers: api.getHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to create blog');
+    return res.json();
+  },
+
+  updateBlog: async (id, data) => {
+    const res = await fetch(`${API_URL}/blogs/${id}`, {
+      method: 'PUT',
+      headers: api.getHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to update blog');
+    return res.json();
+  },
+
+  deleteBlog: async (id) => {
+    const res = await fetch(`${API_URL}/blogs/${id}`, {
+      method: 'DELETE',
+      headers: api.getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to delete blog');
+    return res.json();
   }
-  return res.json();
 };
 
-export const fetchBlogs = async (skip = 0, limit = 10): Promise<Blog[]> => {
-  const res = await fetch(`${API_BASE}/blogs?skip=${skip}&limit=${limit}`);
-  return jsonOrThrow(res);
-};
-
-export const adminLogin = async (username: string, password: string): Promise<TokenResponse> => {
-  const body = new URLSearchParams();
-  body.append('username', username);
-  body.append('password', password);
-
-  const res = await fetch(`${API_BASE}/admin/login`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: body.toString(),
-  });
-
-  return jsonOrThrow(res);
-};
-
-export const saveToken = (token: string) => {
-  sessionStorage.setItem('apiToken', token);
-};
-
-export const getToken = (): string | null => sessionStorage.getItem('apiToken');
-
-const authHeaders = () => {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-};
-
-export const fetchAdmins = async (): Promise<any[]> => {
-  const res = await fetch(`${API_BASE}/admin/list`, {
-    headers: {
-      ...authHeaders(),
-    },
-  });
-  return jsonOrThrow(res);
-};
-
-export const createBlog = async (blog: Partial<Blog>) => {
-  const res = await fetch(`${API_BASE}/blogs`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-    },
-    body: JSON.stringify(blog),
-  });
-  return jsonOrThrow(res);
-};
-
-export const updateBlog = async (id: string | number, updates: Partial<Blog>) => {
-  const res = await fetch(`${API_BASE}/blogs/${id}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-    },
-    body: JSON.stringify(updates),
-  });
-  return jsonOrThrow(res);
-};
-
-export const deleteBlog = async (id: string | number) => {
-  const res = await fetch(`${API_BASE}/blogs/${id}`, {
-    method: 'DELETE',
-    headers: {
-      ...authHeaders(),
-    },
-  });
-  return jsonOrThrow(res);
-};
-
-export const createAdmin = async (username: string, password: string) => {
-  const res = await fetch(`${API_BASE}/admin/create`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-    },
-    body: JSON.stringify({ username, password }),
-  });
-  return jsonOrThrow(res);
-};
-
-export const updateAdmin = async (id: string | number, data: { username?: string; password?: string }) => {
-  const res = await fetch(`${API_BASE}/admin/${id}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-    },
-    body: JSON.stringify(data),
-  });
-  return jsonOrThrow(res);
-};
-
-export default {
-  fetchBlogs,
-  adminLogin,
-  saveToken,
-  getToken,
-  fetchAdmins,
-  createBlog,
-  updateBlog,
-  deleteBlog,
-  createAdmin,
-  updateAdmin,
-};
+export default api;

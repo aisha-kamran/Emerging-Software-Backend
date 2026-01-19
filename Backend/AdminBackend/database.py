@@ -1,60 +1,37 @@
 import os
-from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
 
+# 1. .env file ko load karein
 load_dotenv()
 
-# PostgreSQL connection parameters (defaults provided)
-# These can be overridden by setting DATABASE_URL in the environment.
-PG_USER = os.getenv("PG_USER", "postgres")
-PG_PASSWORD = os.getenv("PG_PASSWORD", "postgres")
-PG_HOST = os.getenv("PG_HOST", "localhost")
-PG_PORT = os.getenv("PG_PORT", "5432")
-PG_DB = os.getenv("PG_DB", "emerging_db")
+# 2. URL wahan se uthayein
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Preferred: set a single DATABASE_URL env var. Fallback to constructed URL.
-# Use the psycopg2 dialect for SQLAlchemy.
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    f"postgresql+psycopg2://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DB}"
-)
+# --- ERROR CHECKING ---
+if not SQLALCHEMY_DATABASE_URL:
+    raise ValueError("❌ ERROR: .env file mein 'DATABASE_URL' nahi mila!")
 
-# Create synchronous SQLAlchemy engine for PostgreSQL
-# Pool settings tuned for typical web apps; adjust as needed.
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-    echo=False,
-    future=False,
-)
+# 3. Supabase Fix: Agar URL 'postgres://' se shuru ho raha hai to usay 'postgresql://' karein
+if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Session factory and declarative base
+# 4. Engine Create Karein
+# 'pool_pre_ping=True' connection ko stable rakhta hai
+engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+
+# 5. Session Local
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# 6. Base Model
 Base = declarative_base()
 
-
+# 7. DB Connection Dependency
 def get_db():
-    """FastAPI dependency that yields a SQLAlchemy Session and ensures it is closed."""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
-
-def create_tables():
-    """Create all tables defined on SQLAlchemy `Base`.
-
-    Note: Import your models (so they are registered on `Base`) before calling
-    this function. The application `main.py` already calls
-    `Base.metadata.create_all(bind=engine)` on startup; this helper is provided
-    for convenience and for scripts that may need to ensure tables exist.
-    """
-    Base.metadata.create_all(bind=engine)
-
-
-__all__ = ["engine", "SessionLocal", "Base", "get_db", "create_tables", "DATABASE_URL"]

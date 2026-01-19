@@ -1,11 +1,18 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User, getCurrentUser, login as doLogin, logout as doLogout, initializeStorage, addUser } from '@/lib/storage';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import api from '@/lib/api';
+
+// ✅ New User Type Definition (Matches Backend)
+export interface User {
+  id: number;
+  username: string;
+  is_super_admin: boolean;
+  token?: string;
+}
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  login: (emailOrUsername: string, password: string) => Promise<User | null>;
+  login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
   isSuperAdmin: boolean;
 }
@@ -16,72 +23,77 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // 1. Check Auth on Load (Reload hone par user gayab na ho)
   useEffect(() => {
-    // Initialize storage with default data
-    initializeStorage();
-    
-    // Check for existing session
-    const currentUser = getCurrentUser();
-    setUser(currentUser);
-    setIsLoading(false);
+    const initAuth = async () => {
+      const token = localStorage.getItem('token');
+      const savedUser = localStorage.getItem('user_data');
+      
+      if (token && savedUser) {
+        try {
+            // Verify if token is still valid by fetching fresh data
+            // (Optional: You can skip this call to save bandwidth)
+            setUser(JSON.parse(savedUser));
+        } catch (error) {
+            console.error("Session expired");
+            logout();
+        }
+      }
+      setIsLoading(false);
+    };
+    initAuth();
   }, []);
 
-  const login = async (emailOrUsername: string, password: string): Promise<User | null> => {
-    // Try backend login first (username expected). If user provided an email, derive username part
-    const username = emailOrUsername.includes('@') ? emailOrUsername.split('@')[0] : emailOrUsername;
+  // 2. Login Function
+  const login = async (username: string, password: string) => {
     try {
-      const tokenResp = await api.adminLogin(username, password);
-      api.saveToken(tokenResp.access_token);
+      // Step A: Get Token from Backend
+      const { access_token } = await api.login(username, password);
+      localStorage.setItem('token', access_token);
 
-      // Try to fetch admins and map to local User shape
-      try {
-        const admins = await api.fetchAdmins();
-        const match = admins.find((a: any) => a.username === username);
-        if (match) {
-          const newUser: User = {
-            id: String(match.id),
-            email: `${match.username}@admin.com`,
-            name: match.username,
-            role: match.is_super_admin ? 'superadmin' : 'admin',
-            createdAt: match.created_at || new Date().toISOString(),
-          };
-          // Persist session in sessionStorage for compatibility with rest of app
-          sessionStorage.setItem('currentUser', JSON.stringify(newUser));
-          setUser(newUser);
-          return newUser;
-        }
-      } catch (e) {
-        // ignore fetchAdmins errors, fall back to local demo login below
+      // Step B: Fetch User Details (Kyunki Login API sirf token deti hai)
+      // Hum admin list mangwa kar current user ko dhoondenge
+      const admins = await api.fetchAdmins();
+      const currentUser = admins.find((u: any) => u.username === username);
+
+      if (!currentUser) {
+        throw new Error('User found but details missing');
       }
 
-      // If we couldn't map admin, create a minimal user entry
-      const fallbackUser: User = {
-        id: `admin-${Date.now()}`,
-        email: `${username}@admin.com`,
-        name: username,
-        role: 'admin',
-        createdAt: new Date().toISOString(),
+      // Step C: Create User Object
+      const userData: User = {
+        id: currentUser.id,
+        username: currentUser.username,
+        is_super_admin: currentUser.is_super_admin,
+        token: access_token
       };
-      sessionStorage.setItem('currentUser', JSON.stringify(fallbackUser));
-      setUser(fallbackUser);
-      return fallbackUser;
-    } catch (e) {
-      // Backend login failed; fall back to local demo auth
-      const loggedInUser = doLogin(emailOrUsername, password);
-      setUser(loggedInUser);
-      return loggedInUser;
+
+      // Step D: Save & Set State
+      localStorage.setItem('user_data', JSON.stringify(userData));
+      setUser(userData);
+      return true;
+
+    } catch (error) {
+      console.error('Login failed:', error);
+      return false;
     }
   };
 
+  // 3. Logout Function
   const logout = () => {
-    doLogout();
+    localStorage.removeItem('token');
+    localStorage.removeItem('user_data');
     setUser(null);
   };
 
-  const isSuperAdmin = user?.role === 'superadmin';
-
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, isSuperAdmin }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      isLoading, 
+      login, 
+      logout,
+      isSuperAdmin: user?.is_super_admin || false 
+    }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,128 +1,61 @@
 import { FileText, Users, CheckCircle, Clock, Activity } from 'lucide-react';
 import AdminLayout from '@/components/layout/AdminLayout';
-import { getLogs, getUsers, getBlogs } from '@/lib/storage';
 import { useEffect, useState } from 'react';
-import api, { FORCE_BACKEND } from '@/lib/api';
+import api from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToastNotification } from '@/components/ui/ToastNotification';
 
+// Types define kiye taake code safe rahe
+interface DashboardStats {
+  total: number;
+  drafts: number;
+  published: number;
+}
+
+interface BlogPost {
+  id: number;
+  title: string;
+  author: string;
+  created_at: string;
+  status: string;
+}
+
 const Dashboard = () => {
-  const [blogs, setBlogs] = useState<any[]>(getBlogs());
-  const { isSuperAdmin } = useAuth();
-  const [users, setUsers] = useState<any[]>(getUsers());
-  const logs = getLogs();
+  const { user } = useAuth(); // Current user info
   const { showToast } = useToastNotification();
+  
+  // State for Real Data
+  const [stats, setStats] = useState<DashboardStats>({ total: 0, drafts: 0, published: 0 });
+  const [blogs, setBlogs] = useState<BlogPost[]>([]);
+  const [adminCount, setAdminCount] = useState(0);
+  const [loading, setLoading] = useState(true);
 
+  // API Call
   useEffect(() => {
-    let mounted = true;
+    const fetchData = async () => {
+      try {
+        // 1. Teeno APIs ek saath call karein
+        const [summaryData, blogsData, adminsData] = await Promise.all([
+          api.fetchBlogSummary(), // /blogs/summary
+          api.fetchBlogs(0, 5),   // /blogs (Top 5 for recent list)
+          api.fetchAdmins()       // /admin/list
+        ]);
 
-    // Fetch public blogs from backend; normalize shape so UI stats work
-    api.fetchBlogs()
-      .then((data) => {
-        if (!mounted) return;
-        const mapped = data.map((b: any) => ({
-          id: b.id,
-          title: b.title,
-          content: b.content,
-          author: b.author || b.author || 'Unknown',
-          // backend uses created_at, frontend expects createdAt
-          createdAt: b.created_at || b.createdAt || new Date().toISOString(),
-          updatedAt: b.updated_at || b.updatedAt || new Date().toISOString(),
-          // some backends don't have `status`; default to published
-          status: b.status || 'published',
-        }));
-        setBlogs(mapped);
-      })
-      .catch(() => {
-        if (!mounted) return;
-        if (!FORCE_BACKEND) {
-          setBlogs(getBlogs());
-        } else {
-          setBlogs([]);
-        }
-      });
-
-    // Try to fetch admins only if we have a token; otherwise keep local users
-    const token = api.getToken();
-    if (FORCE_BACKEND) {
-      if (!token) {
-        // force backend mode and no token: notify user
-        if (mounted) {
-          setUsers([]);
-          showToast('error', 'Backend-only mode enabled — please login to fetch dashboard data');
-        }
-      } else {
-        api.fetchAdmins()
-          .then((data) => { if (mounted) {
-            const mapped = data.map((a: any) => ({
-              id: String(a.id),
-              email: `${a.username}@admin.com`,
-              name: a.username,
-              role: a.is_super_admin ? 'superadmin' : 'admin',
-              createdAt: a.created_at || new Date().toISOString(),
-              isRemote: true,
-            }));
-            setUsers(mapped);
-          }}).catch(() => { if (mounted) setUsers([]); });
+        setStats(summaryData);
+        setBlogs(blogsData);
+        setAdminCount(adminsData.length);
+      } catch (error) {
+        console.error("Dashboard Error:", error);
+        showToast('error', 'Failed to load dashboard data');
+      } finally {
+        setLoading(false);
       }
-    } else {
-      if (token) {
-        api.fetchAdmins()
-          .then((data) => { if (mounted) {
-            const mapped = data.map((a: any) => ({
-              id: String(a.id),
-              email: `${a.username}@admin.com`,
-              name: a.username,
-              role: a.is_super_admin ? 'superadmin' : 'admin',
-              createdAt: a.created_at || new Date().toISOString(),
-              isRemote: true,
-            }));
-            setUsers(mapped);
-          }}).catch(() => { /* keep existing local users */ });
-      }
-    }
+    };
 
-    return () => { mounted = false; };
+    fetchData();
   }, []);
 
-  const publishedBlogs = blogs.filter((b: any) => b.status === 'published').length;
-  const draftBlogs = blogs.filter((b: any) => b.status === 'draft').length;
-  const recentLogs = logs.slice(-5).reverse();
-
-  // Filter users for display: hide superadmin unless current user is superadmin
-  const visibleUsers = isSuperAdmin ? users : users.filter(u => u.role !== 'superadmin');
-
-  const stats = [
-    { 
-      label: 'Total Blogs', 
-      value: blogs.length, 
-      icon: FileText, 
-      color: 'text-primary',
-      bgColor: 'bg-primary/20'
-    },
-    { 
-      label: 'Published', 
-      value: publishedBlogs, 
-      icon: CheckCircle, 
-      color: 'text-accent',
-      bgColor: 'bg-accent/20'
-    },
-    { 
-      label: 'Drafts', 
-      value: draftBlogs, 
-      icon: Clock, 
-      color: 'text-warning',
-      bgColor: 'bg-warning/20'
-    },
-    { 
-      label: 'Total Admins', 
-      value: visibleUsers.length, 
-      icon: Users, 
-      color: 'text-primary',
-      bgColor: 'bg-primary/20'
-    },
-  ];
-
+  // Helper: Date Formatting
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       month: 'short',
@@ -132,47 +65,101 @@ const Dashboard = () => {
     });
   };
 
+  // Cards Data Configuration
+  const statCards = [
+    { 
+      label: 'Total Blogs', 
+      value: stats.total, 
+      icon: FileText, 
+      color: 'text-blue-500',
+      bgColor: 'bg-blue-500/10'
+    },
+    { 
+      label: 'Published', 
+      value: stats.published, 
+      icon: CheckCircle, 
+      color: 'text-green-500',
+      bgColor: 'bg-green-500/10'
+    },
+    { 
+      label: 'Drafts', 
+      value: stats.drafts, 
+      icon: Clock, 
+      color: 'text-yellow-500',
+      bgColor: 'bg-yellow-500/10'
+    },
+    { 
+      label: 'Total Admins', 
+      value: adminCount, 
+      icon: Users, 
+      color: 'text-purple-500',
+      bgColor: 'bg-purple-500/10'
+    },
+  ];
+
+  if (loading) {
+    return (
+      <AdminLayout title="Dashboard">
+        <div className="flex items-center justify-center h-screen">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </AdminLayout>
+    );
+  }
+
   return (
     <AdminLayout title="Dashboard" subtitle="Welcome back! Here's your overview.">
-      {/* Stats Grid */}
+      
+      {/* 1. Top Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {stats.map((stat, index) => (
+        {statCards.map((stat, index) => (
           <div
             key={stat.label}
-            className="stat-card animate-slide-up"
-            style={{ animationDelay: `${0.1 * index}s` }}
+            className="p-6 rounded-2xl bg-[#0f172a] border border-gray-800 hover:border-gray-700 transition-all duration-200"
           >
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-col gap-4">
               <div className={`w-12 h-12 rounded-xl ${stat.bgColor} flex items-center justify-center`}>
                 <stat.icon className={`w-6 h-6 ${stat.color}`} />
               </div>
+              <div>
+                <p className="text-3xl font-bold text-white mb-1">{stat.value}</p>
+                <p className="text-sm text-gray-400">{stat.label}</p>
+              </div>
             </div>
-            <p className="text-3xl font-bold text-foreground mb-1">{stat.value}</p>
-            <p className="text-sm text-muted-foreground">{stat.label}</p>
           </div>
         ))}
       </div>
 
-      {/* Recent Activity */}
+      {/* 2. Main Content Grid (Recent Blogs & Activity) */}
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* Recent Blogs */}
-        <div className="stat-card">
+        
+        {/* Left: Recent Blogs */}
+        <div className="p-6 rounded-2xl bg-[#0f172a] border border-gray-800">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-semibold text-foreground">Recent Blogs</h2>
-            <FileText className="w-5 h-5 text-muted-foreground" />
+            <h2 className="text-lg font-semibold text-white">Recent Blogs</h2>
+            <FileText className="w-5 h-5 text-gray-500" />
           </div>
           
           {blogs.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No blogs yet</p>
+            <p className="text-gray-500 text-sm">No blogs created yet.</p>
           ) : (
-            <div className="space-y-4">
-              {blogs.slice(-5).reverse().map((blog) => (
-                <div key={blog.id} className="flex items-center gap-4">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-foreground truncate">{blog.title}</p>
-                    <p className="text-sm text-muted-foreground">by {blog.author}</p>
+            <div className="space-y-6">
+              {blogs.map((blog) => (
+                <div key={blog.id} className="group flex items-center justify-between">
+                  <div className="flex-1 min-w-0 pr-4">
+                    <p className="font-medium text-white truncate mb-1 group-hover:text-blue-400 transition-colors">
+                      {blog.title}
+                    </p>
+                    <p className="text-sm text-gray-500">
+                      by <span className="text-gray-400">{blog.author}</span>
+                    </p>
                   </div>
-                  <span className={`badge ${blog.status === 'published' ? 'badge-success' : 'badge-warning'}`}>
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium border
+                    ${blog.status === 'published' 
+                      ? 'bg-green-500/10 text-green-500 border-green-500/20' 
+                      : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
+                    }`}
+                  >
                     {blog.status}
                   </span>
                 </div>
@@ -181,50 +168,41 @@ const Dashboard = () => {
           )}
         </div>
 
-        {/* Recent Activity */}
-        <div className="stat-card">
+        {/* Right: Recent Activity (Simulated using Blogs Data) */}
+        <div className="p-6 rounded-2xl bg-[#0f172a] border border-gray-800">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-semibold text-foreground">Recent Activity</h2>
-            <Activity className="w-5 h-5 text-muted-foreground" />
+            <h2 className="text-lg font-semibold text-white">Recent Activity</h2>
+            <Activity className="w-5 h-5 text-gray-500" />
           </div>
           
-          {recentLogs.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No activity yet</p>
+          {blogs.length === 0 ? (
+            <p className="text-gray-500 text-sm">No recent activity.</p>
           ) : (
-            <div className="space-y-4">
-              {recentLogs.map((log) => (
-                <div key={log.id} className="flex items-start gap-4">
-                  <div className={`
-                    w-2 h-2 rounded-full mt-2
-                    ${log.action === 'create' ? 'bg-accent' : ''}
-                    ${log.action === 'update' ? 'bg-primary' : ''}
-                    ${log.action === 'delete' ? 'bg-destructive' : ''}
-                  `} />
+            <div className="space-y-6 relative before:absolute before:left-[5px] before:top-2 before:h-[85%] before:w-[2px] before:bg-gray-800">
+              {blogs.map((blog) => (
+                <div key={blog.id} className="flex gap-4 relative">
+                  {/* Green Dot */}
+                  <div className="w-2.5 h-2.5 rounded-full bg-green-500 mt-1.5 z-10 ring-4 ring-[#0f172a]" />
+                  
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground">
-                      <span className="font-medium">{log.adminName}</span>
-                      {' '}
-                      <span className={`
-                        ${log.action === 'create' ? 'text-accent' : ''}
-                        ${log.action === 'update' ? 'text-primary' : ''}
-                        ${log.action === 'delete' ? 'text-destructive' : ''}
-                      `}>
-                        {log.action}d
-                      </span>
-                      {' '}
-                      <span className="text-muted-foreground">{log.entity}</span>
+                    <p className="text-sm text-white">
+                      <span className="font-medium text-white">{blog.author}</span>
+                      <span className="text-green-500 mx-1">created</span> 
+                      blog
                     </p>
-                    <p className="text-xs text-muted-foreground truncate">{log.entityName}</p>
+                    <p className="text-sm text-gray-400 truncate mt-0.5">
+                      {blog.title}
+                    </p>
                   </div>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {formatDate(log.date)}
+                  <span className="text-xs text-gray-500 whitespace-nowrap pt-1.5">
+                    {formatDate(blog.created_at)}
                   </span>
-                <                # from a shell
-                Invoke-RestMethod -Uri http://localhost:8000/blogs -Method Get | ConvertTo-Json -Depth 4/div>
+                </div>
               ))}
             </div>
           )}
         </div>
+
       </div>
     </AdminLayout>
   );
