@@ -6,22 +6,23 @@ import { useToastNotification } from '@/components/ui/ToastNotification';
 import { useAuth } from '@/contexts/AuthContext';
 import api from '@/lib/api';
 
+// Interface Update
 interface BlogPost {
   id: number;
   title: string;
   content: string;
   author: string;
   status: string;
-  created_at: string;
+  created_at: string; // Backend sends snake_case
 }
 
 const Blogs = () => {
-  const { user } = useAuth(); // Assume user object has { username: "..." }
+  const { user } = useAuth();
   const { showToast } = useToastNotification();
   
   const [blogs, setBlogs] = useState<BlogPost[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // Loading state
 
   // Modal States
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -33,13 +34,19 @@ const Blogs = () => {
   const [content, setContent] = useState('');
   const [status, setStatus] = useState('draft');
 
-  // 1. Fetch Blogs
+  // 1. Fetch Blogs (Updated Logic)
   const loadBlogs = async () => {
     setLoading(true);
     try {
       const data = await api.fetchBlogs();
-      setBlogs(data);
+      // Data ko set karne se pehle check karein
+      if (Array.isArray(data)) {
+        setBlogs(data);
+      } else {
+        setBlogs([]);
+      }
     } catch (error) {
+      console.error("Blogs Fetch Error:", error);
       showToast('error', 'Failed to fetch blogs');
     } finally {
       setLoading(false);
@@ -50,6 +57,7 @@ const Blogs = () => {
     loadBlogs();
   }, []);
 
+  // ... (Baaki handlers same rahenge: OpenModal, HandleSubmit etc.) ...
   const openCreateModal = () => {
     setSelectedBlog(null);
     setTitle('');
@@ -71,55 +79,57 @@ const Blogs = () => {
     setIsDeleteModalOpen(true);
   };
 
-  // 2. Handle Submit
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || !content.trim()) {
-      showToast('error', 'Please fill in all fields');
-      return;
-    }
+    if (!title.trim() || !content.trim()) return;
 
-    // Prepare payload
     const payload = {
       title,
       content,
       status,
-      author: user?.username || 'Admin' // Send current logged in user as author
+      author: user?.email || user?.full_name || 'Admin'
     };
 
     try {
       if (selectedBlog) {
-        // Update
         await api.updateBlog(selectedBlog.id, payload);
-        showToast('success', 'Blog updated successfully');
+        showToast('success', 'Blog updated');
       } else {
-        // Create
         await api.createBlog(payload);
-        showToast('success', 'Blog created successfully');
+        showToast('success', 'Blog created');
       }
       setIsModalOpen(false);
       loadBlogs();
-    } catch (error: any) {
+    } catch (error) {
       showToast('error', 'Operation failed');
     }
   };
 
-  // 3. Handle Delete
   const handleDelete = async () => {
     if (!selectedBlog) return;
     try {
       await api.deleteBlog(selectedBlog.id);
-      showToast('success', 'Blog deleted successfully');
+      showToast('success', 'Deleted');
       setIsDeleteModalOpen(false);
       loadBlogs();
     } catch (error) {
-      showToast('error', 'Failed to delete blog');
+      showToast('error', 'Delete failed');
+    }
+  };
+
+  // Safe Date Formatting
+  const formatDate = (dateString: string) => {
+    if (!dateString) return 'N/A';
+    try {
+      return new Date(dateString).toLocaleDateString();
+    } catch (e) {
+      return 'Invalid Date';
     }
   };
 
   const filteredBlogs = blogs.filter(blog =>
-    blog.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    blog.author.toLowerCase().includes(searchTerm.toLowerCase())
+    blog.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    blog.author?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -155,7 +165,7 @@ const Blogs = () => {
             </thead>
             <tbody>
               {loading ? (
-                 <tr><td colSpan={5} className="text-center py-8">Loading...</td></tr>
+                 <tr><td colSpan={5} className="text-center py-8">Loading data from server...</td></tr>
               ) : filteredBlogs.length === 0 ? (
                 <tr><td colSpan={5} className="text-center py-8">No blogs found</td></tr>
               ) : (
@@ -163,18 +173,22 @@ const Blogs = () => {
                   <tr key={blog.id}>
                     <td>
                       <div>
-                        <p className="font-medium text-foreground">{blog.title}</p>
-                        <p className="text-sm text-muted-foreground truncate max-w-xs">{blog.content.substring(0, 50)}...</p>
+                        {/* Safe Access using ?. */}
+                        <p className="font-medium text-foreground">{blog?.title || 'No Title'}</p>
+                        <p className="text-sm text-muted-foreground truncate max-w-xs">
+                          {blog?.content?.substring(0, 50)}...
+                        </p>
                       </div>
                     </td>
-                    <td className="text-muted-foreground">{blog.author}</td>
+                    <td className="text-muted-foreground">{blog?.author || 'Unknown'}</td>
                     <td>
-                      <span className={`badge ${blog.status === 'published' ? 'badge-success' : 'badge-warning'}`}>
-                        {blog.status}
+                      <span className={`badge ${blog?.status === 'published' ? 'badge-success' : 'badge-warning'}`}>
+                        {blog?.status || 'draft'}
                       </span>
                     </td>
                     <td className="text-muted-foreground">
-                        {new Date(blog.created_at).toLocaleDateString()}
+                        {/* Backend sends created_at (snake_case) */}
+                        {formatDate(blog?.created_at)}
                     </td>
                     <td>
                       <div className="flex justify-end gap-2">
@@ -202,30 +216,15 @@ const Blogs = () => {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">Title</label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="input-field"
-              placeholder="Enter blog title"
-            />
+            <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="input-field" placeholder="Enter title" />
           </div>
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">Content</label>
-            <textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              className="input-field min-h-[150px] resize-y"
-              placeholder="Write content..."
-            />
+            <textarea value={content} onChange={(e) => setContent(e.target.value)} className="input-field min-h-[150px]" placeholder="Content..." />
           </div>
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">Status</label>
-            <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              className="input-field"
-            >
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className="input-field">
               <option value="draft">Draft</option>
               <option value="published">Published</option>
             </select>
@@ -242,7 +241,7 @@ const Blogs = () => {
         onClose={() => setIsDeleteModalOpen(false)}
         onConfirm={handleDelete}
         title="Delete Blog"
-        message={`Delete "${selectedBlog?.title}"?`}
+        message="Are you sure?"
         confirmLabel="Delete"
         type="danger"
       />

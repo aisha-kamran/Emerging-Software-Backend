@@ -1,10 +1,10 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import api from '@/lib/api';
 
-// ✅ New User Type Definition (Matches Backend)
 export interface User {
   id: number;
-  username: string;
+  email: string;
+  full_name: string;
   is_super_admin: boolean;
   token?: string;
 }
@@ -12,7 +12,7 @@ export interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  login: (username: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   isSuperAdmin: boolean;
 }
@@ -23,7 +23,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 1. Check Auth on Load (Reload hone par user gayab na ho)
   useEffect(() => {
     const initAuth = async () => {
       const token = localStorage.getItem('token');
@@ -31,11 +30,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       
       if (token && savedUser) {
         try {
-            // Verify if token is still valid by fetching fresh data
-            // (Optional: You can skip this call to save bandwidth)
             setUser(JSON.parse(savedUser));
         } catch (error) {
-            console.error("Session expired");
             logout();
         }
       }
@@ -44,31 +40,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     initAuth();
   }, []);
 
-  // 2. Login Function
-  const login = async (username: string, password: string) => {
+  const login = async (email: string, password: string) => {
     try {
-      // Step A: Get Token from Backend
-      const { access_token } = await api.login(username, password);
+      const { access_token } = await api.login(email, password);
       localStorage.setItem('token', access_token);
 
-      // Step B: Fetch User Details (Kyunki Login API sirf token deti hai)
-      // Hum admin list mangwa kar current user ko dhoondenge
       const admins = await api.fetchAdmins();
-      const currentUser = admins.find((u: any) => u.username === username);
+      const currentUser = admins.find((u: any) => u.email === email);
 
       if (!currentUser) {
-        throw new Error('User found but details missing');
+        throw new Error('User details missing');
       }
 
-      // Step C: Create User Object
       const userData: User = {
         id: currentUser.id,
-        username: currentUser.username,
+        email: currentUser.email,
+        full_name: currentUser.full_name,
         is_super_admin: currentUser.is_super_admin,
         token: access_token
       };
 
-      // Step D: Save & Set State
       localStorage.setItem('user_data', JSON.stringify(userData));
       setUser(userData);
       return true;
@@ -79,7 +70,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // 3. Logout Function
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user_data');

@@ -1,10 +1,6 @@
-// src/lib/api.ts
-
-// Backend URL
 const API_URL = 'http://127.0.0.1:8000';
 
 export const api = {
-  // --- Auth & Helpers ---
   getToken: () => localStorage.getItem('token'),
   
   getHeaders: () => {
@@ -15,11 +11,9 @@ export const api = {
     };
   },
 
-  // --- Login ---
-  login: async (username, password) => {
-    // Backend expects form-data
+  login: async (email, password) => {
     const formData = new URLSearchParams();
-    formData.append('username', username);
+    formData.append('username', email); 
     formData.append('password', password);
 
     const res = await fetch(`${API_URL}/admin/login`, {
@@ -29,10 +23,9 @@ export const api = {
     });
 
     if (!res.ok) throw new Error('Invalid credentials');
-    return res.json(); // Returns { access_token, token_type }
+    return res.json();
   },
 
-  // --- Admins ---
   fetchAdmins: async () => {
     const res = await fetch(`${API_URL}/admin/list`, {
       method: 'GET',
@@ -42,11 +35,11 @@ export const api = {
     return res.json();
   },
 
-  createAdmin: async (username, password) => {
+  createAdmin: async (email, fullName, password) => {
     const res = await fetch(`${API_URL}/admin/create`, {
       method: 'POST',
       headers: api.getHeaders(),
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ email, full_name: fullName, password }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -77,7 +70,6 @@ export const api = {
     return res.json();
   },
 
-  // --- Blogs ---
   fetchBlogs: async (skip = 0, limit = 100) => {
     const res = await fetch(`${API_URL}/blogs?skip=${skip}&limit=${limit}`, {
       method: 'GET',
